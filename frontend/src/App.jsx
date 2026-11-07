@@ -1,4 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
+import * as ort from 'onnxruntime-web';
+
+// Use @latest without version lock or let it resolve automatically
+ort.env.wasm.wasmPaths = "https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/";
+
 import {
   Fish,
   Upload,
@@ -56,11 +61,11 @@ const PROJECT_STATS = {
   trainImages: '17,478',
   valImages: '3,743',
   testImages: '3,750',
-  testAccuracy: '94.88%',
+  testAccuracy: '94.69%',
   valAccuracy: '94.87%',
-  weightedPrecision: '94.84%',
-  weightedRecall: '94.88%',
-  weightedF1: '94.83%',
+  weightedPrecision: '94.66%',
+  weightedRecall: '94.69%',
+  weightedF1: '94.66%',
   numClasses: 5,
   modelArch: 'MobileNetV2'
 };
@@ -71,8 +76,8 @@ const SPECIES_INFO = [
     name: 'Amphiprion clarkii',
     commonName: "Clark's Anemonefish",
     datasetCount: 4049,
-    precision: '98.51%',
-    recall: '98.19%',
+    precision: '98.86%',
+    recall: '97.86%',
     f1: '98.35%',
     color: '#3B82F6',
     description: 'A dark brown or black anemonefish with two or three white bands. Highly territorial and lives in symbiosis with sea anemones.',
@@ -86,9 +91,9 @@ const SPECIES_INFO = [
     name: 'Chaetodon lunulatus',
     commonName: 'Oval Butterflyfish',
     datasetCount: 2534,
-    precision: '99.47%',
-    recall: '99.21%',
-    f1: '99.34%',
+    precision: '98.43%',
+    recall: '98.95%',
+    f1: '98.69%',
     color: '#0D9488',
     description: 'Identifiable by its yellow oval body with thin dark horizontal lines and a prominent black eye stripe. Feeds almost exclusively on coral polyps.',
     habitat: 'Coral-rich Reefs & Protected Bays',
@@ -101,9 +106,9 @@ const SPECIES_INFO = [
     name: 'Chromis chrysura',
     commonName: 'Stout-body Chromis',
     datasetCount: 3593,
-    precision: '89.60%',
-    recall: '82.96%',
-    f1: '86.15%',
+    precision: '88.50%',
+    recall: '84.07%',
+    f1: '86.23%',
     color: '#6366F1',
     description: 'A damselfish species with a metallic blue-gray body, distinct dark vertical stripes, and a pale yellow tail fin. Forms large aggregations in current-swept reefs.',
     habitat: 'Outer Reef Slopes & Rocky Substrates',
@@ -113,12 +118,12 @@ const SPECIES_INFO = [
   },
   {
     id: 'Dascyllus_reticulatus',
-    name: 'Dascyllus reticulatus',
+    name: 'Dascyllus_reticulatus',
     commonName: 'Reticulate Dascyllus',
     datasetCount: 12112,
-    precision: '94.16%',
-    recall: '96.59%',
-    f1: '95.36%',
+    precision: '94.29%',
+    recall: '96.26%',
+    f1: '95.26%',
     color: '#F59E0B',
     description: 'The most dominant class in Fish4Knowledge dataset. Displays a white body with two prominent dark vertical bars and black-edged scales creating a mesh pattern.',
     habitat: 'Branching Acropora Coral Colonies',
@@ -131,9 +136,9 @@ const SPECIES_INFO = [
     name: 'Plectroglyphidodon dickii',
     commonName: "Dick's Damselfish",
     datasetCount: 2683,
-    precision: '94.99%',
-    recall: '94.04%',
-    f1: '94.51%',
+    precision: '94.70%',
+    recall: '93.05%',
+    f1: '93.87%',
     color: '#EC4899',
     description: 'Recognizable by its brownish-yellow front body, a bold black vertical band near the rear, and a striking white tail peduncle. Highly territorial over coral branches.',
     habitat: 'Exposed Surge Zones & Coral Reef Tops',
@@ -155,11 +160,11 @@ const DATASET_DISTRIBUTION = SPECIES_INFO.map(s => ({
 }));
 
 const CONFUSION_MATRIX = [
-  [597, 0, 0, 9, 2],
-  [1, 378, 0, 2, 0],
-  [1, 0, 448, 79, 12],
-  [6, 2, 48, 1756, 6],
-  [1, 0, 4, 19, 379]
+  [595, 2, 0, 9, 2],
+  [1, 377, 0, 1, 2],
+  [0, 0, 454, 77, 9],
+  [3, 3, 54, 1750, 8],
+  [3, 1, 5, 19, 375]
 ];
 
 const PRESET_SAMPLES = [
@@ -197,6 +202,10 @@ export default function App() {
   const [backendStatus, setBackendStatus] = useState('standalone'); // 'connected' | 'standalone' | 'testing'
   const [showConfigModal, setShowConfigModal] = useState(false);
 
+  // ONNX Model Inference State
+  const [ortSession, setOrtSession] = useState(null);
+  const [modelLoading, setModelLoading] = useState(true);
+
   // Classification State
   const [selectedImage, setSelectedImage] = useState(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -207,9 +216,26 @@ export default function App() {
   const [viewingImage, setViewingImage] = useState(null);
 
   useEffect(() => {
-    // Check local backend health on mount
-    checkBackendHealth();
-  }, [apiEndpoint]);
+    // 1. Load ONNX Model session on mount
+    async function loadOnnxModel() {
+      try {
+        const session = await ort.InferenceSession.create('/model/aquaclass_model.onnx', {
+          executionProviders: ['wasm'],
+          graphOptimizationLevel: 'all'
+        });
+        setOrtSession(session);
+        setModelLoading(false);
+        console.log("ONNX model loaded successfully in browser!");
+      } catch (e) {
+        console.warn("Could not load local ONNX model, falling back to simulated inference:", e);
+        setModelLoading(false);
+      }
+    }
+    loadOnnxModel();
+
+    // Set backend status to standalone since we are using client-side ONNX web runtime
+    setBackendStatus('standalone');
+  }, []);
 
   const checkBackendHealth = async () => {
     setBackendStatus('testing');
@@ -278,15 +304,82 @@ export default function App() {
         setIsAnalyzing(false);
         return;
       } catch (err) {
-        console.warn("Backend inference failed, falling back to client model simulation:", err);
+        console.warn("Backend inference failed, trying ONNX browser inference:", err);
       }
     }
 
-    // Client-side PyTorch Logic Simulation fallback (matches best accuracy profile)
+    // 2. Run Real Browser-based ONNX Inference if session is available
+    if (ortSession && selectedImage.preview) {
+      try {
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.src = selectedImage.preview;
+
+        await new Promise((resolve, reject) => {
+          img.onload = resolve;
+          img.onerror = reject;
+        });
+
+        const canvas = document.createElement('canvas');
+        canvas.width = 224;
+        canvas.height = 224;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, 224, 224);
+
+        const imgData = ctx.getImageData(0, 0, 224, 224);
+        const { data } = imgData;
+
+        // Create float32 tensor array [1, 3, 224, 224] with ImageNet normalization
+        const float32Data = new Float32Array(1 * 3 * 224 * 224);
+        const rMean = 0.485, gMean = 0.456, bMean = 0.406;
+        const rStd = 0.229, gStd = 0.224, bStd = 0.225;
+
+        for (let i = 0; i < 224 * 224; i++) {
+          let r = data[i * 4] / 255.0;
+          let g = data[i * 4 + 1] / 255.0;
+          let b = data[i * 4 + 2] / 255.0;
+
+          float32Data[i] = (r - rMean) / rStd;
+          float32Data[i + 224 * 224] = (g - gMean) / gStd;
+          float32Data[i + 2 * 224 * 224] = (b - bMean) / bStd;
+        }
+
+        const inputTensor = new ort.Tensor('float32', float32Data, [1, 3, 224, 224]);
+        const feeds = { [ortSession.inputNames[0]]: inputTensor };
+
+        const results = await ortSession.run(feeds);
+        const output = results[ortSession.outputNames[0]].data;
+
+        // Softmax & Top predictions calculation
+        let expScores = Array.from(output).map(val => Math.exp(val));
+        let sumExp = expScores.reduce((a, b) => a + b, 0);
+        let probabilities = expScores.map(val => val / sumExp);
+
+        let indexedProbs = probabilities.map((prob, idx) => ({ idx, prob }));
+        indexedProbs.sort((a, b) => b.prob - a.prob);
+
+        const topPreds = indexedProbs.slice(0, 3).map(item => ({
+          class: SPECIES_INFO[item.idx]?.id || SPECIES_INFO[0].id,
+          confidence: item.prob
+        }));
+
+        setAnalysisResult({
+          predictedClass: topPreds[0].class,
+          confidence: topPreds[0].confidence,
+          topPredictions: topPreds,
+          isSimulated: false
+        });
+        setIsAnalyzing(false);
+        return;
+      } catch (onnxErr) {
+        console.warn("ONNX browser execution fallback triggered:", onnxErr);
+      }
+    }
+
+    // Fallback deterministic simulation if ONNX session is initializing
     setTimeout(() => {
       let targetClassId = 'Dascyllus_reticulatus';
 
-      // Infer target species based on selected preset or pseudo-random deterministic hashing
       if (selectedImage.name.includes('Clarkii') || selectedImage.preview?.includes('544551763')) {
         targetClassId = 'Amphiprion_clarkii';
       } else if (selectedImage.name.includes('Lunulatus') || selectedImage.preview?.includes('522069169874')) {
@@ -298,13 +391,12 @@ export default function App() {
       } else if (selectedImage.name.includes('Reticulatus') || selectedImage.preview?.includes('524704654690')) {
         targetClassId = 'Dascyllus_reticulatus';
       } else {
-        // Deterministic pick for uploaded images
         const nameHash = selectedImage.name.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
         targetClassId = SPECIES_INFO[nameHash % SPECIES_INFO.length].id;
       }
 
       const mainClass = SPECIES_INFO.find(s => s.id === targetClassId);
-      const confScore = Math.floor(Math.random() * 6) + 94; // 94% - 99%
+      const confScore = Math.floor(Math.random() * 6) + 94;
       
       const otherClasses = SPECIES_INFO.filter(s => s.id !== targetClassId);
       const remConf = 100 - confScore;
@@ -378,35 +470,18 @@ export default function App() {
           </nav>
 
           {/* Header Controls */}
-          <div className="flex items-center space-x-2">
-            {/* API Status Badge / Settings */}
-            <button
-              onClick={() => setShowConfigModal(true)}
-              className={`flex items-center space-x-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-all ${
-                backendStatus === 'connected'
-                  ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/20'
-                  : 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30 hover:bg-amber-500/20'
-              }`}
-              title="FastAPI Backend Settings"
-            >
-              <Server className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">
-                {backendStatus === 'connected' ? 'FastAPI Live' : 'Demo Mode'}
-              </span>
-              <Settings className="w-3 h-3 ml-1 opacity-70" />
-            </button>
-
-            {/* Dark Mode Toggle */}
-            <button
-              onClick={() => setDarkMode(!darkMode)}
-              className={`p-2 rounded-lg border transition-colors ${
-                darkMode ? 'bg-slate-800 border-slate-700 text-amber-400' : 'bg-slate-100 border-slate-200 text-slate-700'
-              }`}
-              title="Toggle Dark/Light Mode"
-            >
-              {darkMode ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
-            </button>
-          </div>
+        <div className="flex items-center space-x-2">
+          {/* Dark Mode Toggle */}
+          <button
+            onClick={() => setDarkMode(!darkMode)}
+            className={`p-2 rounded-lg border transition-colors ${
+              darkMode ? 'bg-slate-800 border-slate-700 text-amber-400' : 'bg-slate-100 border-slate-200 text-slate-700'
+            }`}
+            title="Toggle Dark/Light Mode"
+          >
+            {darkMode ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+          </button>
+        </div>
         </div>
 
         {/* Mobile Tab Navigation Scrollbar */}
@@ -553,7 +628,7 @@ export default function App() {
             </div>
 
             {/* How It Works Section */}
-            <div className="space-y-8">
+           <div className="space-y-8">
               <div className="text-center max-w-2xl mx-auto">
                 <h2 className="text-2xl sm:text-3xl font-bold tracking-tight mb-2">How AquaClass AI Works</h2>
                 <p className="text-slate-500 text-sm">
@@ -572,18 +647,19 @@ export default function App() {
                   return (
                     <div
                       key={idx}
-                      className={`p-6 rounded-2xl border relative overflow-hidden transition-all ${
-                        darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200 shadow-sm'
+                      className={`p-6 pt-8 rounded-2xl border relative overflow-hidden transition-all ${
+                        darkMode ? 'bg-slate-900 border-slate-800 text-slate-100' : 'bg-white border-slate-200 shadow-sm text-slate-900'
                       }`}
                     >
-                      <span className="text-5xl font-black text-slate-200 dark:text-slate-800/80 absolute -right-2 -top-2 select-none pointer-events-none">
+                      {/* Fixed absolute positioning so numbers don't get cut off */}
+                      <span className="text-4xl font-black text-slate-200 dark:text-slate-800 absolute right-3 top-2 select-none pointer-events-none">
                         {item.step}
                       </span>
                       <div className="w-10 h-10 rounded-xl bg-teal-500/10 text-teal-600 dark:text-teal-400 flex items-center justify-center mb-4">
                         <Icon className="w-5 h-5" />
                       </div>
                       <h3 className="font-bold text-base mb-2">{item.title}</h3>
-                      <p className="text-slate-500 text-xs leading-relaxed">{item.desc}</p>
+                      <p className="text-slate-500 dark:text-slate-400 text-xs leading-relaxed">{item.desc}</p>
                     </div>
                   );
                 })}
@@ -656,7 +732,7 @@ export default function App() {
             <div className="max-w-3xl mx-auto text-center space-y-2">
               <div className="inline-flex items-center space-x-2 px-3 py-1 rounded-full bg-teal-500/10 text-teal-600 dark:text-teal-400 text-xs font-semibold">
                 <Sparkles className="w-3.5 h-3.5" />
-                <span>PyTorch MobileNetV2 Inference</span>
+                <span>PyTorch MobileNetV2 ONNX Browser Inference</span>
               </div>
               <h1 className="text-3xl font-extrabold tracking-tight">AI Fish Species Classifier</h1>
               <p className="text-slate-500 text-sm">
@@ -755,7 +831,7 @@ export default function App() {
                         {isAnalyzing ? (
                           <>
                             <RefreshCw className="w-5 h-5 animate-spin" />
-                            <span>Running PyTorch MobileNetV2...</span>
+                            <span>Running ONNX MobileNetV2...</span>
                           </>
                         ) : (
                           <>
@@ -776,7 +852,7 @@ export default function App() {
                   <div className={`p-8 rounded-2xl border text-center space-y-4 ${darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200 shadow-sm'}`}>
                     <div className="w-12 h-12 rounded-full border-4 border-teal-500 border-t-transparent animate-spin mx-auto"></div>
                     <p className="font-bold text-base">Analyzing Spatial Features...</p>
-                    <p className="text-xs text-slate-500">Applying ImageNet normalization and forward pass through MobileNetV2 bottleneck layers.</p>
+                    <p className="text-xs text-slate-500">Applying ImageNet normalization and forward pass through MobileNetV2 ONNX Web runtime.</p>
                   </div>
                 )}
 
@@ -793,7 +869,7 @@ export default function App() {
                     
                     {/* Top Result Banner */}
                     {(() => {
-                      const topSpecies = SPECIES_INFO.find(s => s.id === analysisResult.predictedClass);
+                      const topSpecies = SPECIES_INFO.find(s => s.id === analysisResult.predictedClass) || SPECIES_INFO[0];
                       const confPercent = (analysisResult.confidence * 100).toFixed(1);
 
                       return (
@@ -870,7 +946,7 @@ export default function App() {
 
                           {/* Simulation Mode Info Badge */}
                           <div className="flex items-center justify-between text-[11px] text-slate-400 pt-2 border-t border-slate-100 dark:border-slate-800">
-                            <span>Backend Engine: {analysisResult.isSimulated ? 'Client PyTorch Logic' : 'FastAPI REST Service'}</span>
+                            <span>Backend Engine: {ortSession ? 'ONNX Runtime Web (Client)' : 'Simulation Fallback'}</span>
                             <button onClick={runClassification} className="text-teal-600 dark:text-teal-400 hover:underline flex items-center space-x-1">
                               <RefreshCw className="w-3 h-3" />
                               <span>Re-classify</span>
@@ -1067,7 +1143,7 @@ export default function App() {
               {/* Table of Hyperparameters */}
               <div className={`md:col-span-6 p-6 rounded-2xl border ${darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200 shadow-sm'}`}>
                 <h3 className="font-bold text-base mb-4 flex items-center space-x-2">
-                  <Sliders className="w-5 h-5 text-teal-600 dark:text-teal-400" />
+                  <Sliders className="w-5 h-5 text-teal-600 :text-teal-400" />
                   <span>Training Configuration & Hyperparameters</span>
                 </h3>
 
@@ -1085,7 +1161,7 @@ export default function App() {
                   ].map((row, i) => (
                     <div key={i} className="flex justify-between py-2 border-b border-slate-100 dark:border-slate-800/80">
                       <span className="text-slate-500 font-medium">{row.key}</span>
-                      <span className="font-bold text-slate-800 dark:text-slate-200">{row.val}</span>
+                      <span className="font-bold text-slate-800" style={{ color: darkMode ? '#ffffff' : undefined }}>{row.val}</span>
                     </div>
                   ))}
                 </div>
@@ -1096,19 +1172,22 @@ export default function App() {
                 <h3 className="font-bold text-base mb-4">Deep Learning Pipeline Workflow</h3>
 
                 <div className="space-y-4 text-xs">
-                  <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700/50">
+                  <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-700/50"
+                        style={{ backgroundColor: darkMode ? '#1e293b' : '#f8fafc' }} >
                     <span className="text-[10px] font-bold text-teal-600 dark:text-teal-400 uppercase">Step 1: Input Preprocessing</span>
                     <p className="font-bold text-sm mt-0.5">Resize (224x224) + Tensor Normalization</p>
                     <p className="text-slate-500 text-[11px] mt-1">Mean = [0.485, 0.456, 0.406], Std = [0.229, 0.224, 0.225]</p>
                   </div>
 
-                  <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700/50">
+                  <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-700/50"
+                        style={{ backgroundColor: darkMode ? '#1e293b' : '#f8fafc' }}>
                     <span className="text-[10px] font-bold text-cyan-600 dark:text-cyan-400 uppercase">Step 2: Feature Extraction</span>
                     <p className="font-bold text-sm mt-0.5">Frozen MobileNetV2 Conv Backbone</p>
                     <p className="text-slate-500 text-[11px] mt-1">Extracts 1280 high-level spatial feature representations.</p>
                   </div>
 
-                  <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700/50">
+                  <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-700/50"
+                        style={{ backgroundColor: darkMode ? '#1e293b' : '#f8fafc' }}>
                     <span className="text-[10px] font-bold text-indigo-600 dark:text-indigo-400 uppercase">Step 3: Linear Classifier</span>
                     <p className="font-bold text-sm mt-0.5">Dropout(0.2) + Linear(1280 → 5)</p>
                     <p className="text-slate-500 text-[11px] mt-1">Computes unnormalized logits for the 5 fish species.</p>
@@ -1162,8 +1241,11 @@ export default function App() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60 font-medium">
-                    {SPECIES_INFO.map((species) => {
-                      const testSupport = Math.floor(species.datasetCount * 0.15);
+                    {SPECIES_INFO.map((species, index) => {
+                      const testSupport = CONFUSION_MATRIX[index].reduce(
+                        (sum, value) => sum + value,
+                         0
+                     );
                       return (
                         <tr key={species.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40">
                           <td className="py-3.5 px-2">
@@ -1262,17 +1344,17 @@ export default function App() {
               {[
                 {
                   title: 'GitHub Source Code',
-                  desc: 'Public repository containing React frontend and FastAPI PyTorch backend modules.',
+                  desc: 'Public repository containing React frontend and ONNX model weights.',
                   icon:  Code2,
                   action: 'View Repository',
-                  url: 'https://github me'
+                  url: 'https://github.com/chnajamulhassan/aquaclass-ai.git'
                 },
                 {
                   title: 'Project Report (PDF)',
                   desc: 'Comprehensive BSCS documentation detailing dataset split, model loss, and confusion matrix analysis.',
                   icon: FileText,
                   action: 'Read Documentation',
-                  url: '#'
+                  url: 'https://drive.google.com/file/d/1bi90s-6FMmEh4lQkg-1z8FY2t93uPa4F/view?usp=sharing'
                 },
                 {
                   title: 'YouTube Demonstration',
@@ -1293,14 +1375,14 @@ export default function App() {
                   desc: 'Final semester project slides with key deep learning metrics and architecture evaluation.',
                   icon: Layers,
                   action: 'View Presentation',
-                  url: '#' // Yahan apni PPT presentation ka link daal dein
+                  url: 'https://docs.google.com/presentation/d/1f3coyDw7cVZ8WKwW1peUKQpSIqZX45mL/edit?usp=sharing&ouid=107662592479196420671&rtpof=true&sd=true'
                 },
                 {
-                  title: 'FastAPI Backend Endpoint',
-                  desc: 'REST API service running PyTorch inference engine with CORS support.',
-                  icon: Server,
-                  action: 'Configure API URL',
-                  onClick: () => setShowConfigModal(true)
+                  title: 'Google Colab Notebook',
+                  desc: 'Training notebook containing MobileNetV2 fine-tuning and PyTorch model weights export.',
+                  icon: Code2,
+                  action: 'View Colab Notebook',
+                  url: 'https://colab.research.google.com/drive/1Mhy_d5j4OG_csM40VDczVXnG_n5u3x-m?usp=sharing'
                 }
               ].map((res, i) => {
                 const Icon = res.icon;
@@ -1348,10 +1430,10 @@ export default function App() {
             {/* About / Abstract Section */}
             <div className={`p-8 rounded-2xl border space-y-4 ${darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200 shadow-sm'}`}>
               <h2 className="text-xl font-bold tracking-tight">Project Overview & Statement</h2>
-              <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+              <p className="text-xs text-slate-600 dark:text-white leading-relaxed">
                 Automated fish species classification plays a crucial role in marine biology, aquaculture monitoring, and biodiversity preservation. Manual identification by marine taxonomists is labor-intensive and difficult to scale across continuous underwater video feeds.
               </p>
-              <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
+              <p className="text-xs text-slate-600 dark:text-white leading-relaxed">
                 <strong>AquaClass AI</strong> solves this problem by training a lightweight MobileNetV2 deep convolutional neural network on 24,971 images spanning 5 coral reef species. By fine-tuning the classification layer using Transfer Learning with Adam optimizer, the system achieves a <strong>94.88% test accuracy</strong> while maintaining low inference latency suited for real-time web deployment.
               </p>
             </div>
@@ -1378,73 +1460,6 @@ export default function App() {
           </div>
         </div>
       </footer>
-
-      {/* ==================== MODAL 1: FASTAPI CONFIGURATION ==================== */}
-      {showConfigModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/70 backdrop-blur-sm animate-fadeIn">
-          <div className={`w-full max-w-md p-6 rounded-2xl border shadow-2xl space-y-4 ${darkMode ? 'bg-slate-900 border-slate-800' : 'bg-white border-slate-200'}`}>
-            <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
-              <div className="flex items-center space-x-2">
-                <Server className="w-5 h-5 text-teal-600 dark:text-teal-400" />
-                <h3 className="font-bold text-base">FastAPI Backend Settings</h3>
-              </div>
-              <button onClick={() => setShowConfigModal(false)} className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200">
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            <p className="text-xs text-slate-500 leading-relaxed">
-              Set your Python FastAPI backend endpoint URL to run live inference against your local or deployed PyTorch model.
-            </p>
-
-            <div className="space-y-2">
-              <label className="text-xs font-bold uppercase tracking-wider text-slate-500">API Endpoint URL</label>
-              <input
-                type="text"
-                value={apiEndpoint}
-                onChange={(e) => setApiEndpoint(e.target.value)}
-                placeholder="http://localhost:8000"
-                className="w-full px-3.5 py-2.5 rounded-xl border text-xs font-mono focus:outline-none focus:ring-2 focus:ring-teal-500 bg-slate-50 dark:bg-slate-800 border-slate-200 dark:border-slate-700"
-              />
-            </div>
-
-            <div className="p-3 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/50 flex items-center justify-between text-xs">
-              <span>Status Check:</span>
-              <span className={`font-bold flex items-center space-x-1 ${
-                backendStatus === 'connected' ? 'text-emerald-500' : 'text-amber-500'
-              }`}>
-                {backendStatus === 'connected' ? (
-                  <>
-                    <CheckCircle2 className="w-3.5 h-3.5" />
-                    <span>Connected</span>
-                  </>
-                ) : (
-                  <>
-                    <AlertCircle className="w-3.5 h-3.5" />
-                    <span>Using Client Simulation</span>
-                  </>
-                )}
-              </span>
-            </div>
-
-            <div className="flex justify-end space-x-2 pt-2">
-              <button
-                onClick={checkBackendHealth}
-                className="px-4 py-2 rounded-xl text-xs font-semibold bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
-              >
-                Test Connection
-              </button>
-              <button
-                onClick={() => setShowConfigModal(false)}
-                className="px-4 py-2 rounded-xl text-xs font-bold bg-teal-600 hover:bg-teal-700 text-white transition-colors"
-              >
-                Done
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* ==================== MODAL 2: SAMPLE IMAGE ZOOM PREVIEW ==================== */}
       {viewingImage && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm">
